@@ -1,0 +1,97 @@
+# sub2api 额度监控
+
+一个简单的 Go 监控服务，对接 [sub2api](https://github.com/Wei-Shaw/sub2api) 的管理后台 API：
+
+- `GET /quotas`：管理员 key 查询所有 anthropic 账号额度。
+- `GET /quota/{id}`：管理员 key 可查任意账号；用户 key 只能查配置绑定的账号。
+- 后台每 `check_interval` 检查一次所有账号的 5 小时 / 7 天窗口使用率。
+- 任一窗口使用率达到 `threshold`（默认 90%）时，关闭该账号调度（schedulable=false）。
+- 已关闭调度的账号，在窗口刷新、使用率回落到阈值以下后自动重新开启调度。
+
+## 对接的 sub2api 接口
+
+| 用途 | 方法与路径 |
+|---|---|
+| 列出账号 | `GET /api/v1/admin/accounts?platform=anthropic&page=&page_size=` |
+| 查账号详情 | `GET /api/v1/admin/accounts/{id}` |
+| 查账号用量 | `GET /api/v1/admin/accounts/{id}/usage?source=active` |
+| 开关调度 | `POST /api/v1/admin/accounts/{id}/schedulable` body `{"schedulable":true}` |
+
+鉴权使用 sub2api 的 **Admin API Key**（后台系统设置里生成，以 `admin-` 开头），通过 `x-api-key` 请求头发送。
+
+用量接口返回的是各窗口的 `utilization`（百分比 0~100），本服务直接以此对比阈值，不需要再配置字段路径。
+
+## 使用
+
+先复制配置：
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+修改 `config.yaml`：
+
+- `sub2api.base_url`：你的 sub2api 地址（不带末尾斜杠）。
+- `sub2api.admin_api_key`：sub2api 的 Admin API Key（`admin-` 开头）。
+- `admin.api_key`：本监控服务的管理员 key。
+- `users`：本监控服务的用户 key 与其可查询的 sub2api 账号 ID（数字）。
+- `threshold` / `check_interval` / `usage_source` / `dry_run`：按需调整。
+
+生成随机 key 可用：
+
+```bash
+openssl rand -hex 32
+```
+
+启动：
+
+```bash
+go mod tidy
+go run . config.yaml
+```
+
+> 建议首次运行先把 `dry_run` 设为 `true`，确认日志里的调度判断符合预期后再改回 `false` 真正生效。
+
+## 查询
+
+管理员查询所有：
+
+```bash
+curl -H "X-API-Key: monitor-admin-key" http://127.0.0.1:8080/quotas
+```
+
+用户查询自己绑定的账号：
+
+```bash
+curl -H "X-API-Key: monitor-user-key" http://127.0.0.1:8080/quota/5
+```
+
+也支持 Bearer：
+
+```bash
+curl -H "Authorization: Bearer monitor-admin-key" http://127.0.0.1:8080/quotas
+```
+
+返回示例（单账号）：
+
+```json
+{
+  "id": "5",
+  "name": "acc-5",
+  "platform": "anthropic",
+  "status": "active",
+  "schedulable": true,
+  "five_hour_percent": 12.3,
+  "seven_day_percent": 45.6,
+  "seven_day_sonnet_percent": 0,
+  "five_hour_resets_at": "2026-07-01T12:00:00Z"
+}
+```
+
+## 配置说明
+
+- `usage_source`：
+  - `active`（默认）：实时向上游拉取用量，sub2api 服务端缓存约 10 分钟，因此每分钟检查也不会频繁打上游。
+  - `passive`：只读 sub2api 已保存的快照，不触发上游请求，但数据可能较旧。
+- `threshold`：0~1 的比例，例如 `0.9` 表示 90%。
+- `dry_run`：为 `true` 时后台只打印将要执行的开/关调度动作，不真正调用 sub2api。

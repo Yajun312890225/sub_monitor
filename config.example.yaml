@@ -1,0 +1,20 @@
+listen_addr: ":8080"
+check_interval: "1m"
+threshold: 0.9          # 任一窗口使用率达到 90% 即关闭调度
+usage_source: "active"  # active=实时拉上游(服务端缓存~10min) | passive=只读快照
+dry_run: false          # true 时只打印将要做的调度变更，不真正调用
+
+sub2api:
+  # 你的 sub2api 部署地址（不带末尾斜杠）
+  base_url: "https://your-sub2api.example.com"
+  # sub2api 后台「系统设置」里的 Admin API Key（以 admin- 开头），通过 x-api-key 头鉴权
+  admin_api_key: "admin-replace-with-your-sub2api-admin-key"
+
+admin:
+  # 本监控服务自己的管理员 key，可随机生成（openssl rand -hex 32）
+  api_key: "monitor-admin-key"
+
+users:
+  # 把本监控服务的用户 key 绑定到某个 sub2api 账号 ID（数字）
+  - id: "1"
+    api_key: "monitor-user-key"
