@@ -14,9 +14,11 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,12 +27,22 @@ import (
 type Config struct {
 	ListenAddr    string        `yaml:"listen_addr"`
 	CheckInterval Duration      `yaml:"check_interval"`
-	Threshold     float64       `yaml:"threshold"`     // 0~1，达到该使用率即关闭调度
-	UsageSource   string        `yaml:"usage_source"`  // active(实时拉上游) | passive(读快照)
-	DryRun        bool          `yaml:"dry_run"`       // 只记录将要做的调度变更，不真正调用
+	Cron          string        `yaml:"cron"`         // 可选：标准 5 段 cron 表达式；留空则用 @every check_interval
+	Threshold     float64       `yaml:"threshold"`    // 0~1，达到该使用率即关闭调度
+	UsageSource   string        `yaml:"usage_source"` // active(实时拉上游) | passive(读快照)
+	DryRun        bool          `yaml:"dry_run"`      // 只记录将要做的调度变更，不真正调用
 	Sub2API       Sub2APIConfig `yaml:"sub2api"`
 	Admin         AdminConfig   `yaml:"admin"`
 	Users         []UserConfig  `yaml:"users"`
+}
+
+// ScheduleSpec 返回传给 robfig/cron 的调度表达式。
+// 优先使用显式配置的 cron 表达式；否则用 check_interval 转成 @every 形式。
+func (c Config) ScheduleSpec() string {
+	if spec := strings.TrimSpace(c.Cron); spec != "" {
+		return spec
+	}
+	return "@every " + c.CheckInterval.Duration.String()
 }
 
 type Sub2APIConfig struct {
@@ -459,28 +471,61 @@ func constantTimeEqual(a, b string) bool {
 
 // ===== 后台监控 =====
 
-func (s *Server) StartQuotaMonitor(ctx context.Context) {
-	s.checkOnce(ctx)
-
-	ticker := time.NewTicker(s.cfg.CheckInterval.Duration)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.checkOnce(ctx)
-		}
-	}
+// checkStats 汇总单次检查的处理结果，用于日志输出。
+type checkStats struct {
+	accounts int
+	enabled  int64 // 成功开启调度（dry-run 时为将要开启）
+	disabled int64 // 成功关闭调度（dry-run 时为将要关闭）
+	skipped  int   // 因 usage 错误或状态非 active 而跳过
+	failed   int64 // 调用 sub2api 失败
 }
 
-func (s *Server) checkOnce(ctx context.Context) {
+func (s *Server) StartQuotaMonitor(ctx context.Context) {
+	spec := s.cfg.ScheduleSpec()
+
+	// 启动时立即执行一次，方便确认任务确实在跑。
+	s.runCheck(ctx, "startup")
+
+	// SkipIfStillRunning：上一次尚未跑完时跳过本次触发（并打印日志），
+	// 对齐原 ticker 逐次串行执行、不重叠的行为。
+	c := cron.New(cron.WithChain(
+		cron.SkipIfStillRunning(cron.PrintfLogger(log.Default())),
+	))
+	id, err := c.AddFunc(spec, func() {
+		s.runCheck(ctx, "cron")
+	})
+	if err != nil {
+		log.Printf("quota monitor: invalid schedule spec=%q: %v", spec, err)
+		return
+	}
+
+	c.Start()
+	log.Printf("quota monitor scheduled: spec=%q next=%s",
+		spec, c.Entry(id).Next.Format("2006-01-02 15:04:05"))
+
+	<-ctx.Done()
+	// 等待正在执行的检查任务收尾后再返回。
+	<-c.Stop().Done()
+}
+
+// runCheck 执行一次检查并打印开始/结束日志，让每次触发都可见。
+func (s *Server) runCheck(ctx context.Context, trigger string) {
+	start := time.Now()
+	log.Printf("[check] start trigger=%s", trigger)
+	stats := s.checkOnce(ctx)
+	log.Printf("[check] done trigger=%s accounts=%d enabled=%d disabled=%d skipped=%d failed=%d took=%s",
+		trigger, stats.accounts, stats.enabled, stats.disabled, stats.skipped, stats.failed,
+		time.Since(start).Round(time.Millisecond))
+}
+
+func (s *Server) checkOnce(ctx context.Context) checkStats {
 	quotas, err := s.CollectQuotas(ctx)
 	if err != nil {
 		log.Printf("quota check failed: %v", err)
-		return
+		return checkStats{}
 	}
+
+	stats := checkStats{accounts: len(quotas)}
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 5)
@@ -489,6 +534,7 @@ func (s *Server) checkOnce(ctx context.Context) {
 		// usage 拉取失败的账号不做调度变更，避免误判。
 		if q.UsageError != "" {
 			log.Printf("skip account=%s name=%q: usage error: %s", q.ID, q.Name, q.UsageError)
+			stats.skipped++
 			continue
 		}
 
@@ -500,6 +546,7 @@ func (s *Server) checkOnce(ctx context.Context) {
 		// 等原因停用的账号强行恢复，跟 sub2api 自身的状态管理打架。
 		// 「关闭调度」(达到额度阈值) 不受此限制，照常执行。
 		if shouldEnable && q.Status != "active" {
+			stats.skipped++
 			continue
 		}
 
@@ -510,23 +557,29 @@ func (s *Server) checkOnce(ctx context.Context) {
 			defer func() { <-sem }()
 
 			action := "disable"
+			counter := &stats.disabled
 			if shouldEnable {
 				action = "enable"
+				counter = &stats.enabled
 			}
 			if s.cfg.DryRun {
+				atomic.AddInt64(counter, 1)
 				log.Printf("[dry-run] would %s account=%s name=%q 5h=%.1f%% 7d=%.1f%% 7d_sonnet=%.1f%%",
 					action, q.ID, q.Name, q.FiveHourPercent, q.SevenDayPercent, q.SevenDaySonnetPercent)
 				return
 			}
 			if err := s.client.SetSchedulable(ctx, q.ID, shouldEnable); err != nil {
+				atomic.AddInt64(&stats.failed, 1)
 				log.Printf("%s schedule account=%s failed: %v", action, q.ID, err)
 				return
 			}
+			atomic.AddInt64(counter, 1)
 			log.Printf("%s schedule account=%s name=%q 5h=%.1f%% 7d=%.1f%% 7d_sonnet=%.1f%%",
 				action, q.ID, q.Name, q.FiveHourPercent, q.SevenDayPercent, q.SevenDaySonnetPercent)
 		}()
 	}
 	wg.Wait()
+	return stats
 }
 
 // ===== 工具 =====

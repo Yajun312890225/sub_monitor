@@ -1,5 +1,6 @@
 listen_addr: ":8080"
-check_interval: "1m"
+check_interval: "1m"    # 检查间隔；cron 留空时按此值以 @every 形式调度
+# cron: "*/5 * * * *"   # 可选：标准 5 段 cron 表达式（robfig/cron）。配置后优先于 check_interval
 threshold: 0.9          # 任一窗口使用率达到 90% 即关闭调度
 usage_source: "active"  # active=实时拉上游(服务端缓存~10min) | passive=只读快照
 dry_run: false          # true 时只打印将要做的调度变更，不真正调用

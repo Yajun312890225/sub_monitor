@@ -4,7 +4,7 @@
 
 - `GET /quotas`：管理员 key 查询所有 anthropic 账号额度。
 - `GET /quota/{id}`：管理员 key 可查任意账号；用户 key 只能查配置绑定的账号。
-- 后台每 `check_interval` 检查一次所有账号的 5 小时 / 7 天窗口使用率。
+- 后台基于 [robfig/cron](https://github.com/robfig/cron) 定时检查所有账号的 5 小时 / 7 天窗口使用率：默认每 `check_interval`（以 `@every` 形式）执行一次，也可用 `cron` 配置标准 cron 表达式。每次执行都会打印 `[check] start` / `[check] done`（含账号数、开启/关闭/跳过/失败计数、耗时），便于确认任务确实在跑。
 - 任一窗口使用率达到 `threshold`（默认 90%）时，关闭该账号调度（schedulable=false）。
 - 已关闭调度的账号，在窗口刷新、使用率回落到阈值以下后自动重新开启调度。
 
@@ -94,4 +94,5 @@ curl -H "Authorization: Bearer monitor-admin-key" http://127.0.0.1:8080/quotas
   - `active`（默认）：实时向上游拉取用量，sub2api 服务端缓存约 10 分钟，因此每分钟检查也不会频繁打上游。
   - `passive`：只读 sub2api 已保存的快照，不触发上游请求，但数据可能较旧。
 - `threshold`：0~1 的比例，例如 `0.9` 表示 90%。
+- `check_interval` / `cron`：调度频率。默认按 `check_interval`（如 `1m`）以 `@every` 形式运行；若配置了 `cron`（标准 5 段表达式，如 `*/5 * * * *`）则优先生效。上一次检查未跑完时会自动跳过本次触发并打印跳过日志，避免重叠执行。
 - `dry_run`：为 `true` 时后台只打印将要执行的开/关调度动作，不真正调用 sub2api。
