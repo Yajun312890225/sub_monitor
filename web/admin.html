@@ -770,8 +770,9 @@
     });
 
     // ===== 会话 =====
-    // 无有效会话 cookie（未通过暗门 / 直接访问 /admin）时，回到首页暗门。
+    // 退出/未授权：清除会话 cookie（keepalive 保证跳转后仍送达），回到首页暗门。
     function logout() {
+      fetch('/api/logout', { method: 'POST', credentials: 'same-origin', keepalive: true }).catch(() => { /* 忽略 */ });
       window.location.href = '/';
     }
 

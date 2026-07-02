@@ -546,9 +546,10 @@
       }
     });
 
-    // 退出：清除会话 cookie，回到输入态。
-    logoutBtn.addEventListener('click', async () => {
-      try { await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) { /* 忽略 */ }
+    // 退出：立即切回输入态，退出请求后台异步发送（keepalive 保证跳转/切换后仍送达），
+    // 不等待网络往返，避免卡顿。
+    logoutBtn.addEventListener('click', () => {
+      fetch('/api/logout', { method: 'POST', credentials: 'same-origin', keepalive: true }).catch(() => { /* 忽略 */ });
       clearMsg();
       setLoggedIn(false);
       keyInput.focus();
