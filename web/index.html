@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>额度查询</title>
+  <style>
+    :root {
+      --bg1: #6366f1;
+      --bg2: #8b5cf6;
+      --card: #ffffff;
+      --text: #1e293b;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --accent: #6366f1;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: linear-gradient(135deg, var(--bg1), var(--bg2));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 460px;
+      background: var(--card);
+      border-radius: 18px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
+      padding: 32px 28px;
+    }
+
+    .title {
+      margin: 0 0 4px;
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .subtitle {
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .logout {
+      padding: 8px 14px;
+      font-size: 13px;
+      background: #f1f5f9;
+      color: var(--muted);
+    }
+
+    .logout:hover {
+      opacity: 1;
+      background: #e2e8f0;
+    }
+
+    .field {
+      display: flex;
+      gap: 10px;
+    }
+
+    input[type="password"],
+    input[type="text"] {
+      flex: 1;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color .15s;
+    }
+
+    input:focus {
+      border-color: var(--accent);
+    }
+
+    /* 文本框 + 视觉打码：仍是圆点显示，但不是密码框，Chrome 永不弹「保存/更新密码」 */
+    .masked {
+      -webkit-text-security: disc;
+      text-security: disc;
+    }
+
+    .head-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    button {
+      padding: 12px 20px;
+      border: none;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s, transform .05s;
+      white-space: nowrap;
+    }
+
+    button:hover {
+      opacity: .9;
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .msg {
+      margin-top: 16px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      display: none;
+    }
+
+    .msg.error {
+      display: block;
+      background: #fef2f2;
+      color: var(--danger);
+      border: 1px solid #fecaca;
+    }
+
+    .result {
+      margin-top: 24px;
+      display: none;
+    }
+
+    .result.show {
+      display: block;
+    }
+
+    .acc-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+
+    .acc-name {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .acc-id {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .badge {
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+
+    .badge.active {
+      background: #ecfdf5;
+      color: var(--ok);
+    }
+
+    .badge.other {
+      background: #f1f5f9;
+      color: var(--muted);
+    }
+
+    .bar-row {
+      margin-bottom: 16px;
+    }
+
+    .bar-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+
+    .bar-label .pct {
+      font-weight: 700;
+    }
+
+    .remain {
+      font-size: 11px;
+      color: var(--muted);
+      margin-left: 6px;
+      font-weight: 400;
+    }
+
+    .bar {
+      height: 10px;
+      background: #f1f5f9;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar > span {
+      display: block;
+      height: 100%;
+      border-radius: 999px;
+      transition: width .4s ease;
+    }
+
+    .reset {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+
+    .refresh {
+      padding: 8px 16px;
+      font-size: 13px;
+      background: #f1f5f9;
+      color: var(--text);
+    }
+
+    .refresh:hover {
+      opacity: 1;
+      background: #e2e8f0;
+    }
+
+    .switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--muted);
+      user-select: none;
+    }
+
+    .switch input {
+      display: none;
+    }
+
+    .switch .track {
+      width: 38px;
+      height: 22px;
+      border-radius: 999px;
+      background: #cbd5e1;
+      position: relative;
+      transition: background .2s;
+      flex: none;
+    }
+
+    .switch .track::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform .2s;
+    }
+
+    .switch input:checked + .track {
+      background: var(--accent);
+    }
+
+    .switch input:checked + .track::after {
+      transform: translateX(16px);
+    }
+
+    .switch-text {
+      white-space: nowrap;
+    }
+
+    /* 给倒计时预留固定宽度，开关切换时文字/按钮不左右跳动 */
+    .countdown {
+      display: inline-block;
+      min-width: 4em;
+      text-align: left;
+    }
+
+    .foot {
+      margin-top: 22px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h1 class="title">额度查询</h1>
+        <p class="subtitle" id="subtitle">输入你的密钥，查看 5 小时 / 7 天额度使用情况</p>
+      </div>
+      <div class="head-actions" id="headActions" style="display:none">
+        <label class="switch">
+          <input type="checkbox" id="autoRefresh" />
+          <span class="track"></span>
+          <span class="switch-text">自动刷新<span class="countdown" id="autoLabel"></span></span>
+        </label>
+        <button id="refreshBtn" class="refresh" type="button">刷新</button>
+        <button id="logoutBtn" class="logout" type="button">退出</button>
+      </div>
+    </div>
+
+    <!-- 密码框：强制英文输入（关掉输入法）；用 div 而非 form 减少 Chrome 保存密码提示 -->
+    <div id="form" class="field">
+      <input id="key" type="password" placeholder="请输入密钥" autocomplete="off"
+        autocorrect="off" autocapitalize="off" spellcheck="false" />
+      <button id="submit" type="button">查询</button>
+    </div>
+
+    <div id="msg" class="msg"></div>
+
+    <div id="result" class="result">
+      <div class="acc-head">
+        <div>
+          <div class="acc-name" id="accName">—</div>
+          <div class="acc-id" id="accId"></div>
+        </div>
+        <span class="badge" id="accStatus"></span>
+      </div>
+      <div id="bars"></div>
+      <div id="usageError" class="msg"></div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('form');
+    const keyInput = document.getElementById('key');
+    const submitBtn = document.getElementById('submit');
+    const msg = document.getElementById('msg');
+    const result = document.getElementById('result');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const subtitle = document.getElementById('subtitle');
+    const headActions = document.getElementById('headActions');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const autoRefreshEl = document.getElementById('autoRefresh');
+    const autoLabelEl = document.getElementById('autoLabel');
+
+    const AUTO_SECONDS = 60;
+    let tickTimer = null;          // 每秒倒计时句柄
+    let countdown = AUTO_SECONDS;  // 距下次自动刷新的秒数
+
+    // 厂商展示名（只显示厂商，不显示账号 ID）。
+    function vendorLabel(p) {
+      const m = { anthropic: 'Anthropic (Claude)', openai: 'OpenAI', gemini: 'Google Gemini' };
+      return m[p] || (p ? p.charAt(0).toUpperCase() + p.slice(1) : '未知厂商');
+    }
+
+    // 只更新倒计时后缀（“自动刷新”文字固定，宽度预留，避免开关时抖动）。
+    function renderAutoLabel() {
+      autoLabelEl.textContent = autoRefreshEl.checked ? `（${countdown}s）` : '';
+    }
+
+    function stopAutoRefresh() {
+      if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+      autoRefreshEl.checked = false;
+      renderAutoLabel();
+    }
+
+    // 切换「已登录」视图：隐藏输入框、显示顶部操作区（登录一次后免再输）。
+    function setLoggedIn(isIn) {
+      form.style.display = isIn ? 'none' : 'flex';
+      subtitle.style.display = isIn ? 'none' : 'block';
+      headActions.style.display = isIn ? 'flex' : 'none';
+      if (!isIn) {
+        result.classList.remove('show');
+        keyInput.value = '';
+        stopAutoRefresh();
+      }
+    }
+
+    // 自动清除非英文字符（key 均为 ASCII），兜底中文输入法误输入。
+    keyInput.addEventListener('input', () => {
+      const cleaned = keyInput.value.replace(/[^\x20-\x7E]/g, '');
+      if (cleaned !== keyInput.value) keyInput.value = cleaned;
+    });
+
+    function showError(text) {
+      result.classList.remove('show');
+      msg.textContent = text;
+      msg.className = 'msg error';
+    }
+
+    function clearMsg() {
+      msg.className = 'msg';
+      msg.textContent = '';
+    }
+
+    function barColor(pct) {
+      if (pct >= 90) return 'var(--danger)';
+      if (pct >= 70) return 'var(--warn)';
+      return 'var(--ok)';
+    }
+
+    // 距刷新的剩余时间（如 3h 47m / 2d 5h / 12m）。
+    function fmtRemain(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d)) return '';
+      let sec = Math.floor((d.getTime() - Date.now()) / 1000);
+      if (sec <= 0) return '即将刷新';
+      const day = Math.floor(sec / 86400); sec %= 86400;
+      const hr = Math.floor(sec / 3600); sec %= 3600;
+      const min = Math.floor(sec / 60);
+      if (day > 0) return `${day}d ${hr}h`;
+      if (hr > 0) return `${hr}h ${min}m`;
+      return `${min}m`;
+    }
+
+    function barRow(label, pct, reset) {
+      const p = Math.max(0, Number(pct) || 0);
+      const width = Math.min(100, p);
+      const rem = fmtRemain(reset);
+      const remHtml = rem ? `<span class="remain">${rem}</span>` : '';
+      return `
+        <div class="bar-row">
+          <div class="bar-label"><span>${label}</span><span><span class="pct">${p.toFixed(1)}%</span>${remHtml}</span></div>
+          <div class="bar"><span style="width:${width}%;background:${barColor(p)}"></span></div>
+        </div>`;
+    }
+
+    function render(q) {
+      document.getElementById('accName').textContent = q.name || '未命名账号';
+      document.getElementById('accId').textContent = vendorLabel(q.platform);
+
+      const statusEl = document.getElementById('accStatus');
+      statusEl.textContent = q.status || '-';
+      statusEl.className = 'badge ' + (q.status === 'active' ? 'active' : 'other');
+
+      const bars = [
+        barRow('5 小时窗口', q.five_hour_percent, q.five_hour_resets_at),
+        barRow('7 天窗口', q.seven_day_percent, q.seven_day_resets_at),
+      ];
+      if (q.seven_day_sonnet_percent > 0) {
+        bars.push(barRow('7 天窗口 (Sonnet)', q.seven_day_sonnet_percent, null));
+      }
+      document.getElementById('bars').innerHTML = bars.join('');
+
+      const ue = document.getElementById('usageError');
+      if (q.usage_error) {
+        ue.className = 'msg error';
+        ue.textContent = '用量获取异常：' + q.usage_error;
+      } else {
+        ue.className = 'msg';
+        ue.textContent = '';
+      }
+      result.classList.add('show');
+    }
+
+    // 提交查询（按钮点击或回车触发，非表单提交）。
+    async function doQuery() {
+      const key = keyInput.value.trim();
+      if (!key) return;
+      clearMsg();
+      submitBtn.disabled = true;
+      submitBtn.textContent = '查询中…';
+      try {
+        const resp = await fetch('/api/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ key }),
+        });
+        const data = await resp.json();
+        if (resp.ok && data.redirect) {
+          window.location.href = data.redirect;
+          return;
+        }
+        if (!resp.ok) {
+          showError(data.error || '查询失败');
+          return;
+        }
+        render(data);
+        setLoggedIn(true); // 查询成功即建立会话，隐藏输入框
+      } catch (err) {
+        showError('网络错误：' + err.message);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '查询';
+      }
+    }
+
+    submitBtn.addEventListener('click', doQuery);
+    keyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doQuery(); });
+
+    // 刷新：凭会话 cookie 重新拉取额度并原地更新（不整页刷新、不闪屏）。
+    async function refreshQuota() {
+      try {
+        const resp = await fetch('/api/me/quota', { credentials: 'same-origin' });
+        if (resp.status === 401) { setLoggedIn(false); return; }
+        if (resp.ok) render(await resp.json());
+      } catch (e) { /* 忽略网络抖动 */ }
+    }
+
+    refreshBtn.addEventListener('click', refreshQuota);
+
+    // 自动刷新开关：打开后每秒倒计时，归零即刷新并重置；关闭则停止。
+    autoRefreshEl.addEventListener('change', () => {
+      if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+      if (autoRefreshEl.checked) {
+        countdown = AUTO_SECONDS;
+        renderAutoLabel();
+        tickTimer = setInterval(() => {
+          countdown--;
+          if (countdown <= 0) { countdown = AUTO_SECONDS; refreshQuota(); }
+          renderAutoLabel();
+        }, 1000);
+      } else {
+        renderAutoLabel();
+      }
+    });
+
+    // 退出：清除会话 cookie，回到输入态。
+    logoutBtn.addEventListener('click', async () => {
+      try { await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) { /* 忽略 */ }
+      clearMsg();
+      setLoggedIn(false);
+      keyInput.focus();
+    });
+
+    // 页面加载时若已有会话，直接展示额度、免再输入。
+    (async function init() {
+      try {
+        const resp = await fetch('/api/me/quota', { credentials: 'same-origin' });
+        if (resp.ok) {
+          render(await resp.json());
+          setLoggedIn(true);
+          return;
+        }
+      } catch (e) { /* 忽略，回到输入态 */ }
+      setLoggedIn(false);
+    })();
+  </script>
+</body>
+
+</html>

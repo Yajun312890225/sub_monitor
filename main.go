@@ -31,9 +31,9 @@ type Config struct {
 	Threshold     float64       `yaml:"threshold"`    // 0~1，达到该使用率即关闭调度
 	UsageSource   string        `yaml:"usage_source"` // active(实时拉上游) | passive(读快照)
 	DryRun        bool          `yaml:"dry_run"`      // 只记录将要做的调度变更，不真正调用
+	StorePath     string        `yaml:"store_path"`   // 用户存储文件路径，默认 data.json
 	Sub2API       Sub2APIConfig `yaml:"sub2api"`
 	Admin         AdminConfig   `yaml:"admin"`
-	Users         []UserConfig  `yaml:"users"`
 }
 
 // ScheduleSpec 返回传给 robfig/cron 的调度表达式。
@@ -51,12 +51,8 @@ type Sub2APIConfig struct {
 }
 
 type AdminConfig struct {
-	APIKey string `yaml:"api_key"`
-}
-
-type UserConfig struct {
-	ID     string `yaml:"id"` // sub2api 账号 ID（数字字符串，例如 "5"）
-	APIKey string `yaml:"api_key"`
+	APIKey    string `yaml:"api_key"`    // 本监控服务的管理员 key
+	EntryCode string `yaml:"entry_code"` // 暗门固定串：在首页输入即跳转 /admin，留空则关闭暗门
 }
 
 type Duration struct {
@@ -99,6 +95,9 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.UsageSource == "" {
 		cfg.UsageSource = "active"
 	}
+	if cfg.StorePath == "" {
+		cfg.StorePath = "data.json"
+	}
 
 	if cfg.Sub2API.BaseURL == "" {
 		return Config{}, errors.New("sub2api.base_url is required")
@@ -126,6 +125,9 @@ type AccountQuota struct {
 	Platform              string     `json:"platform"`
 	Status                string     `json:"status"`
 	Schedulable           bool       `json:"schedulable"`
+	AutoSchedule          bool       `json:"auto_schedule"`       // 是否参与本服务的自动调度（默认 true）
+	Concurrency           int        `json:"concurrency"`         // 配置的最大并发
+	CurrentConcurrency    int        `json:"current_concurrency"` // 当前实时并发
 	FiveHourPercent       float64    `json:"five_hour_percent"`
 	SevenDayPercent       float64    `json:"seven_day_percent"`
 	SevenDaySonnetPercent float64    `json:"seven_day_sonnet_percent"`
@@ -164,11 +166,13 @@ type envelope struct {
 
 // rawAccount 仅取本服务关心的账号字段。
 type rawAccount struct {
-	ID          json.Number `json:"id"`
-	Name        string      `json:"name"`
-	Platform    string      `json:"platform"`
-	Status      string      `json:"status"`
-	Schedulable bool        `json:"schedulable"`
+	ID                 json.Number `json:"id"`
+	Name               string      `json:"name"`
+	Platform           string      `json:"platform"`
+	Status             string      `json:"status"`
+	Schedulable        bool        `json:"schedulable"`
+	Concurrency        int         `json:"concurrency"`         // 配置的最大并发
+	CurrentConcurrency int         `json:"current_concurrency"` // 当前实时并发
 }
 
 type accountListData struct {
@@ -205,13 +209,12 @@ func NewSub2APIClient(cfg Config) *Sub2APIClient {
 	}
 }
 
-// ListAnthropicAccounts 列出全部 anthropic 平台账号（自动翻页）。
-func (c *Sub2APIClient) ListAnthropicAccounts(ctx context.Context) ([]rawAccount, error) {
+// ListAccounts 列出全部账号（不限平台，含 anthropic / openai，自动翻页）。
+func (c *Sub2APIClient) ListAccounts(ctx context.Context) ([]rawAccount, error) {
 	var all []rawAccount
 	page := 1
 	for {
 		q := url.Values{}
-		q.Set("platform", "anthropic")
 		q.Set("page", fmt.Sprint(page))
 		q.Set("page_size", fmt.Sprint(listPageSize))
 
@@ -230,9 +233,30 @@ func (c *Sub2APIClient) ListAnthropicAccounts(ctx context.Context) ([]rawAccount
 }
 
 // GetUsage 获取单账号 5h/7d 窗口使用率。
+//
+// 注意：部分平台（如 anthropic）在 source=active 下只返回 5h 窗口，7d 数据仅在 passive 快照里。
+// 因此当主源缺少 seven_day 时，再拉一次 passive 补齐 7d（及 7d_sonnet），
+// 既保证 5h 用实时数据，又能完整展示 7d。openai 的 active 本身含 7d，不会触发这次补拉。
 func (c *Sub2APIClient) GetUsage(ctx context.Context, id string) (usageData, error) {
+	data, err := c.getUsage(ctx, id, c.source)
+	if err != nil {
+		return usageData{}, err
+	}
+	if c.source == "active" && data.SevenDay == nil {
+		if passive, perr := c.getUsage(ctx, id, "passive"); perr == nil {
+			data.SevenDay = passive.SevenDay
+			if data.SevenDaySonnet == nil {
+				data.SevenDaySonnet = passive.SevenDaySonnet
+			}
+		}
+	}
+	return data, nil
+}
+
+// getUsage 按指定 source 拉取单账号用量。
+func (c *Sub2APIClient) getUsage(ctx context.Context, id, source string) (usageData, error) {
 	q := url.Values{}
-	q.Set("source", c.source)
+	q.Set("source", source)
 	var data usageData
 	if err := c.getJSON(ctx, fmt.Sprintf(pathUsageFmt, url.PathEscape(id))+"?"+q.Encode(), &data); err != nil {
 		return usageData{}, err
@@ -301,12 +325,14 @@ func (c *Sub2APIClient) do(ctx context.Context, method, path string, body []byte
 
 func quotaFromUsage(acc rawAccount, usage usageData) AccountQuota {
 	q := AccountQuota{
-		ID:          acc.ID.String(),
-		Name:        acc.Name,
-		Platform:    acc.Platform,
-		Status:      acc.Status,
-		Schedulable: acc.Schedulable,
-		UsageError:  usage.Error,
+		ID:                 acc.ID.String(),
+		Name:               acc.Name,
+		Platform:           acc.Platform,
+		Status:             acc.Status,
+		Schedulable:        acc.Schedulable,
+		Concurrency:        acc.Concurrency,
+		CurrentConcurrency: acc.CurrentConcurrency,
+		UsageError:         usage.Error,
 	}
 	if usage.FiveHour != nil {
 		q.FiveHourPercent = usage.FiveHour.Utilization
@@ -324,7 +350,7 @@ func quotaFromUsage(acc rawAccount, usage usageData) AccountQuota {
 
 // CollectQuotas 列账号 + 并发拉取每个账号的 usage。
 func (s *Server) CollectQuotas(ctx context.Context) ([]AccountQuota, error) {
-	accounts, err := s.client.ListAnthropicAccounts(ctx)
+	accounts, err := s.client.ListAccounts(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -349,6 +375,9 @@ func (s *Server) CollectQuotas(ctx context.Context) ([]AccountQuota, error) {
 		}()
 	}
 	wg.Wait()
+	for i := range quotas {
+		quotas[i].AutoSchedule = s.store.AutoScheduleEnabled(quotas[i].ID)
+	}
 	return quotas, nil
 }
 
@@ -358,35 +387,52 @@ func (s *Server) QuotaByID(ctx context.Context, id string) (AccountQuota, error)
 	if err := s.client.getJSON(ctx, pathListAccounts+"/"+url.PathEscape(id), &acc); err != nil {
 		return AccountQuota{}, err
 	}
-	usage, err := s.client.GetUsage(ctx, id)
-	if err != nil {
-		return quotaFromUsage(acc, usageData{Error: err.Error()}), nil
+	var q AccountQuota
+	if usage, err := s.client.GetUsage(ctx, id); err != nil {
+		q = quotaFromUsage(acc, usageData{Error: err.Error()})
+	} else {
+		q = quotaFromUsage(acc, usage)
 	}
-	return quotaFromUsage(acc, usage), nil
+	q.AutoSchedule = s.store.AutoScheduleEnabled(id)
+	return q, nil
 }
 
 // ===== HTTP 服务 =====
 
 type Server struct {
-	cfg    Config
-	client *Sub2APIClient
-	mux    *http.ServeMux
+	cfg          Config
+	client       *Sub2APIClient
+	store        *UserStore
+	sessionToken string // 暗门通过后写入浏览器的会话令牌（由 admin key 派生，不可反解）
+	mux          *http.ServeMux
 }
+
+// 会话 cookie 名：管理员（暗门通过）与普通用户各一个。
+const (
+	sessionCookieName = "mon_session" // 管理员会话（值为 admin key 派生哈希）
+	userCookieName    = "mon_user"    // 用户会话（值为用户 key 的哈希，绑定某账号）
+)
 
 type APIKeyInfo struct {
 	Admin     bool
 	AccountID string
 }
 
-func NewServer(cfg Config) *Server {
+func NewServer(cfg Config, store *UserStore) *Server {
 	s := &Server{
 		cfg:    cfg,
 		client: NewSub2APIClient(cfg),
-		mux:    http.NewServeMux(),
+		store:  store,
+		// 会话令牌由 admin key 派生：稳定（重启不失效）、不可反解出 admin key。
+		sessionToken: hashKey("mon-session:" + cfg.Admin.APIKey),
+		mux:          http.NewServeMux(),
 	}
+	// 兼容旧的 JSON 接口
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /quotas", s.handleQuotas)
 	s.mux.HandleFunc("GET /quota/{id}", s.handleQuotaByID)
+	// 网页与 Web API（页面、用户查询、管理接口），实现见 web.go
+	s.registerWebRoutes()
 	return s
 }
 
@@ -439,6 +485,12 @@ func (s *Server) handleQuotaByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authenticate(r *http.Request) (APIKeyInfo, bool) {
+	// 暗门会话 cookie 视为管理员（通过暗门后无需再输 admin key）。
+	if c, err := r.Cookie(sessionCookieName); err == nil && s.sessionToken != "" &&
+		constantTimeEqual(c.Value, s.sessionToken) {
+		return APIKeyInfo{Admin: true}, true
+	}
+
 	apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
 	if apiKey == "" {
 		apiKey = strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
@@ -450,10 +502,8 @@ func (s *Server) authenticate(r *http.Request) (APIKeyInfo, bool) {
 	if constantTimeEqual(apiKey, s.cfg.Admin.APIKey) {
 		return APIKeyInfo{Admin: true}, true
 	}
-	for _, user := range s.cfg.Users {
-		if constantTimeEqual(apiKey, user.APIKey) {
-			return APIKeyInfo{AccountID: user.ID}, true
-		}
+	if accountID, ok := s.store.FindByKey(apiKey); ok {
+		return APIKeyInfo{AccountID: accountID}, true
 	}
 	return APIKeyInfo{}, false
 }
@@ -531,6 +581,11 @@ func (s *Server) checkOnce(ctx context.Context) checkStats {
 	sem := make(chan struct{}, 5)
 	for _, q := range quotas {
 		q := q
+		// 已关闭「自动调度」的账号，本服务不做任何调度变更。
+		if !q.AutoSchedule {
+			stats.skipped++
+			continue
+		}
 		// usage 拉取失败的账号不做调度变更，避免误判。
 		if q.UsageError != "" {
 			log.Printf("skip account=%s name=%q: usage error: %s", q.ID, q.Name, q.UsageError)
@@ -605,7 +660,12 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	server := NewServer(cfg)
+	store, err := LoadUserStore(cfg.StorePath)
+	if err != nil {
+		log.Fatalf("load user store: %v", err)
+	}
+
+	server := NewServer(cfg, store)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

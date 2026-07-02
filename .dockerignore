@@ -1,0 +1,14 @@
+# 版本控制与本地产物
+.git
+.gitignore
+monitor
+.gocache/
+
+# 运行期数据与密钥（通过挂载卷提供，不打进镜像）
+config.yaml
+data/
+data.json
+
+# 文档与编辑器配置
+*.md
+.vscode/

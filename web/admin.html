@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>管理后台 · 额度监控</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #ffffff;
+      --text: #1e293b;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --accent: #6366f1;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: linear-gradient(135deg, #1e293b, #4338ca);
+      padding: 24px;
+    }
+
+    /* ===== 登录 ===== */
+    .login-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 80vh;
+    }
+
+    .login-card {
+      width: 100%;
+      max-width: 420px;
+      background: var(--panel);
+      border-radius: 18px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, .3);
+      padding: 32px 28px;
+    }
+
+    .login-card h1 {
+      margin: 0 0 4px;
+      font-size: 20px;
+    }
+
+    .login-card p {
+      margin: 0 0 22px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    /* ===== 表单控件 ===== */
+    input[type="password"],
+    input[type="text"] {
+      width: 100%;
+      padding: 11px 13px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: var(--accent);
+    }
+
+    button {
+      border: none;
+      border-radius: 9px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 10px 16px;
+      transition: opacity .15s, transform .05s;
+    }
+
+    button:hover {
+      opacity: .9;
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    button.ghost {
+      background: #f1f5f9;
+      color: var(--text);
+    }
+
+    button.warn {
+      background: #fff7ed;
+      color: var(--warn);
+    }
+
+    button.danger {
+      background: #fef2f2;
+      color: var(--danger);
+    }
+
+    button.sm {
+      padding: 6px 11px;
+      font-size: 12px;
+    }
+
+    button.autobtn.on {
+      background: #ecfdf5;
+      color: var(--ok);
+    }
+
+    button.autobtn.off {
+      background: #f1f5f9;
+      color: var(--muted);
+    }
+
+    /* ===== 面板 ===== */
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: none;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    .topbar h1 {
+      margin: 0;
+      color: #fff;
+      font-size: 20px;
+    }
+
+    .topbar .actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, .2);
+      padding: 22px;
+      margin-bottom: 22px;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .panel-head h2 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 0 0 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .pct {
+      font-weight: 700;
+    }
+
+    .badge {
+      font-size: 12px;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+
+    .badge.active {
+      background: #ecfdf5;
+      color: var(--ok);
+    }
+
+    .badge.other {
+      background: #f1f5f9;
+      color: var(--muted);
+    }
+
+    .badge.on {
+      background: #ecfdf5;
+      color: var(--ok);
+    }
+
+    .badge.off {
+      background: #fef2f2;
+      color: var(--danger);
+    }
+
+    .create-form {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+
+    .create-form input {
+      width: auto;
+      flex: 1;
+      min-width: 140px;
+    }
+
+    .row-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 24px;
+      font-size: 13px;
+    }
+
+    .switch {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      color: rgba(255, 255, 255, .9);
+      user-select: none;
+    }
+
+    .switch input {
+      display: none;
+    }
+
+    .switch .track {
+      width: 38px;
+      height: 22px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .35);
+      position: relative;
+      transition: background .2s;
+      flex: none;
+    }
+
+    .switch .track::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform .2s;
+    }
+
+    .switch input:checked + .track {
+      background: var(--ok);
+    }
+
+    .switch input:checked + .track::after {
+      transform: translateX(16px);
+    }
+
+    .switch-text {
+      white-space: nowrap;
+    }
+
+    /* 给倒计时预留固定宽度，开关切换时文字/按钮不左右跳动 */
+    .countdown {
+      display: inline-block;
+      min-width: 4em;
+      text-align: left;
+    }
+
+    .toast {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e293b;
+      color: #fff;
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-size: 13px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, .3);
+      display: none;
+      z-index: 60;
+    }
+
+    /* ===== 弹层 ===== */
+    .modal-mask {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, .55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      padding: 24px;
+    }
+
+    .modal-mask.show {
+      display: flex;
+    }
+
+    .modal {
+      background: #fff;
+      border-radius: 16px;
+      padding: 26px;
+      width: 100%;
+      max-width: 480px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, .35);
+    }
+
+    .modal h3 {
+      margin: 0 0 8px;
+      font-size: 17px;
+    }
+
+    .modal .warn-text {
+      color: var(--warn);
+      font-size: 13px;
+      margin: 0 0 16px;
+    }
+
+    .key-box {
+      display: flex;
+      gap: 8px;
+    }
+
+    .key-box input {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+    }
+
+    .modal-foot {
+      margin-top: 20px;
+      text-align: right;
+    }
+
+    .err {
+      color: var(--danger);
+      font-size: 13px;
+      margin-top: 12px;
+      min-height: 18px;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- 主面板（通过暗门后凭会话 cookie 直接进入，无需再登录） -->
+  <div class="container" id="container">
+    <div class="topbar">
+      <h1>管理后台</h1>
+      <div class="actions">
+        <label class="switch">
+          <input type="checkbox" id="autoRefresh" />
+          <span class="track"></span>
+          <span class="switch-text">自动刷新<span class="countdown" id="autoLabel"></span></span>
+        </label>
+        <button class="ghost" id="refreshBtn">刷新</button>
+        <button class="ghost" id="logoutBtn">退出</button>
+      </div>
+    </div>
+
+    <!-- 账号额度 -->
+    <div class="panel">
+      <div class="panel-head">
+        <h2>所有账号额度</h2>
+      </div>
+      <p class="hint">「自动调度 开」时后台按阈值自动开关该账号（手动开关可能被下次检查覆盖）；点「关」后本服务不再自动调度，手动开关将保留。</p>
+      <div id="quotaTableWrap">
+        <div class="empty">加载中…</div>
+      </div>
+    </div>
+
+    <!-- 账号管理 -->
+    <div class="panel">
+      <div class="panel-head">
+        <h2>账号管理</h2>
+      </div>
+      <div class="create-form">
+        <input id="newAccountId" type="text" placeholder="账号 ID（数字）" />
+        <input id="newLabel" type="text" placeholder="备注（可选）" />
+        <button id="createBtn">新建账号</button>
+      </div>
+      <div id="userTableWrap">
+        <div class="empty">加载中…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 生成 key 弹层 -->
+  <div class="modal-mask" id="keyModal">
+    <div class="modal">
+      <h3 id="keyModalTitle">用户密钥</h3>
+      <p class="warn-text">⚠️ 密钥仅显示这一次，请立即复制保存。关闭后无法再次查看。</p>
+      <div class="key-box">
+        <input id="keyModalValue" type="text" readonly />
+        <button id="copyKeyBtn">复制</button>
+      </div>
+      <div class="modal-foot">
+        <button class="ghost" id="closeKeyModal">我已保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const container = document.getElementById('container');
+    const toast = document.getElementById('toast');
+
+    // ===== 通用请求（凭会话 cookie 鉴权，无需再带 admin key）=====
+    async function api(path, opts = {}) {
+      const headers = Object.assign({}, opts.headers || {});
+      if (opts.body) headers['Content-Type'] = 'application/json';
+      const resp = await fetch(path, { ...opts, headers, credentials: 'same-origin' });
+      let data = {};
+      try { data = await resp.json(); } catch (e) { /* 忽略空响应体 */ }
+      if (!resp.ok) {
+        const err = new Error(data.error || ('请求失败：' + resp.status));
+        err.status = resp.status;
+        throw err;
+      }
+      return data;
+    }
+
+    function showToast(text) {
+      toast.textContent = text;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 2200);
+    }
+
+    function pctColor(pct) {
+      if (pct >= 90) return 'var(--danger)';
+      if (pct >= 70) return 'var(--warn)';
+      return 'var(--ok)';
+    }
+
+    function fmtPct(v) {
+      const p = Math.max(0, Number(v) || 0);
+      return `<span class="pct" style="color:${pctColor(p)}">${p.toFixed(1)}%</span>`;
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return '-';
+      const d = new Date(iso);
+      if (isNaN(d)) return '-';
+      return d.toLocaleString('zh-CN', { hour12: false });
+    }
+
+    // 距刷新的剩余时间（如 3h 47m / 2d 5h / 12m）。
+    function fmtRemain(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d)) return '';
+      let sec = Math.floor((d.getTime() - Date.now()) / 1000);
+      if (sec <= 0) return '即将刷新';
+      const day = Math.floor(sec / 86400); sec %= 86400;
+      const hr = Math.floor(sec / 3600); sec %= 3600;
+      const min = Math.floor(sec / 60);
+      if (day > 0) return `${day}d ${hr}h`;
+      if (hr > 0) return `${hr}h ${min}m`;
+      return `${min}m`;
+    }
+
+    // 额度单元格：百分比 + 剩余刷新时间（如 4% 3h 47m）。
+    function pctCell(pct, reset) {
+      const rem = fmtRemain(reset);
+      const sub = rem ? ` <span style="font-size:11px;color:var(--muted);font-weight:400">${rem}</span>` : '';
+      return fmtPct(pct) + sub;
+    }
+
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ));
+    }
+
+    // ===== 账号额度 =====
+    async function loadQuotas() {
+      const wrap = document.getElementById('quotaTableWrap');
+      try {
+        const data = await api('/api/admin/quotas');
+        const accounts = data.accounts || [];
+        if (!accounts.length) {
+          wrap.innerHTML = '<div class="empty">暂无账号</div>';
+          return;
+        }
+        const rows = accounts.map(q => {
+          const statusCls = q.status === 'active' ? 'active' : 'other';
+          const schedCls = q.schedulable ? 'on' : 'off';
+          const schedText = q.schedulable ? '开启' : '关闭';
+          const toggleLabel = q.schedulable ? '关调度' : '开调度';
+          const toggleCls = q.schedulable ? 'danger' : 'ghost';
+          const sonnet = q.seven_day_sonnet_percent > 0 ? fmtPct(q.seven_day_sonnet_percent) : '-';
+          const errMark = q.usage_error ? ' <span title="' + esc(q.usage_error) + '" style="color:var(--danger)">⚠</span>' : '';
+          const cc = Number(q.current_concurrency) || 0;
+          const cmax = Number(q.concurrency) || 0;
+          const conc = `<span style="font-weight:700;color:${cc > 0 ? 'var(--ok)' : 'var(--muted)'}">${cc}</span><span style="color:var(--muted)"> / ${cmax}</span>`;
+          const autoOn = q.auto_schedule !== false; // 默认开启
+          return `<tr>
+            <td>${esc(q.id)}</td>
+            <td>${esc(q.name || '-')}${errMark}</td>
+            <td><span class="badge ${statusCls}">${esc(q.status || '-')}</span></td>
+            <td><span class="badge ${schedCls}">${schedText}</span></td>
+            <td>${conc}</td>
+            <td>${pctCell(q.five_hour_percent, q.five_hour_resets_at)}</td>
+            <td>${pctCell(q.seven_day_percent, q.seven_day_resets_at)}</td>
+            <td>${sonnet}</td>
+            <td>
+              <div class="row-actions">
+                <button class="sm autobtn ${autoOn ? 'on' : 'off'}" data-auto="${q.id}" data-next="${autoOn ? '0' : '1'}">${autoOn ? '自动调度 开' : '自动调度 关'}</button>
+                <button class="sm ${toggleCls}" data-sched="${q.id}" data-next="${q.schedulable ? '0' : '1'}">${toggleLabel}</button>
+              </div>
+            </td>
+          </tr>`;
+        }).join('');
+        wrap.innerHTML = `<table>
+          <thead><tr>
+            <th>ID</th><th>名称</th><th>状态</th><th>调度</th><th>并发(当前/最大)</th>
+            <th>5h</th><th>7d</th><th>7d(Sonnet)</th><th>操作</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+      } catch (err) {
+        if (err.status === 401) return logout();
+        wrap.innerHTML = `<div class="empty">加载失败：${esc(err.message)}</div>`;
+      }
+    }
+
+    async function toggleSchedulable(id, next) {
+      try {
+        await api(`/api/admin/accounts/${encodeURIComponent(id)}/schedulable`, {
+          method: 'POST',
+          body: JSON.stringify({ schedulable: next }),
+        });
+        showToast('已' + (next ? '开启' : '关闭') + '调度');
+        loadQuotas();
+      } catch (err) {
+        if (err.status === 401) return logout();
+        showToast('操作失败：' + err.message);
+      }
+    }
+
+    async function toggleAutoSchedule(id, next) {
+      try {
+        await api(`/api/admin/accounts/${encodeURIComponent(id)}/auto-schedule`, {
+          method: 'POST',
+          body: JSON.stringify({ enabled: next }),
+        });
+        showToast(next ? '已开启自动调度' : '已关闭自动调度');
+        loadQuotas();
+      } catch (err) {
+        if (err.status === 401) return logout();
+        showToast('操作失败：' + err.message);
+      }
+    }
+
+    // ===== 账号管理 =====
+    async function loadUsers() {
+      const wrap = document.getElementById('userTableWrap');
+      try {
+        const data = await api('/api/admin/users');
+        const users = data.users || [];
+        if (!users.length) {
+          wrap.innerHTML = '<div class="empty">暂无账号，请在上方新建</div>';
+          return;
+        }
+        const rows = users.map(u => `<tr>
+          <td>${esc(u.account_id)}</td>
+          <td>${esc(u.label || '-')}</td>
+          <td><code>${esc(u.key_prefix)}…</code></td>
+          <td>${fmtTime(u.created_at)}</td>
+          <td>
+            <div class="row-actions">
+              <button class="sm ghost" data-edit="${esc(u.account_id)}" data-label="${esc(u.label || '')}">备注</button>
+              <button class="sm warn" data-reset="${esc(u.account_id)}">重置 key</button>
+              <button class="sm danger" data-del="${esc(u.account_id)}">删除</button>
+            </div>
+          </td>
+        </tr>`).join('');
+        wrap.innerHTML = `<table>
+          <thead><tr>
+            <th>账号 ID</th><th>备注</th><th>Key 前缀</th><th>创建时间</th><th>操作</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+      } catch (err) {
+        if (err.status === 401) return logout();
+        wrap.innerHTML = `<div class="empty">加载失败：${esc(err.message)}</div>`;
+      }
+    }
+
+    async function createUser() {
+      const idEl = document.getElementById('newAccountId');
+      const labelEl = document.getElementById('newLabel');
+      const accountId = idEl.value.trim();
+      if (!accountId) { showToast('请填写账号 ID'); return; }
+      try {
+        const data = await api('/api/admin/users', {
+          method: 'POST',
+          body: JSON.stringify({ account_id: accountId, label: labelEl.value.trim() }),
+        });
+        idEl.value = '';
+        labelEl.value = '';
+        showKeyModal('账号 ' + accountId + ' 的密钥', data.key);
+        loadUsers();
+      } catch (err) {
+        if (err.status === 401) return logout();
+        showToast('新建失败：' + err.message);
+      }
+    }
+
+    async function resetUser(id) {
+      if (!confirm('确认重置账号 ' + id + ' 的 key？旧 key 将立即失效。')) return;
+      try {
+        const data = await api(`/api/admin/users/${encodeURIComponent(id)}/reset`, { method: 'POST' });
+        showKeyModal('新密钥（账号 ' + id + '）', data.key);
+        loadUsers();
+      } catch (err) {
+        if (err.status === 401) return logout();
+        showToast('重置失败：' + err.message);
+      }
+    }
+
+    async function editUser(id, current) {
+      const label = prompt('修改账号 ' + id + ' 的备注：', current || '');
+      if (label === null) return;
+      try {
+        await api(`/api/admin/users/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ label: label.trim() }),
+        });
+        showToast('已保存');
+        loadUsers();
+      } catch (err) {
+        if (err.status === 401) return logout();
+        showToast('保存失败：' + err.message);
+      }
+    }
+
+    async function deleteUser(id) {
+      if (!confirm('确认删除账号 ' + id + ' 的用户？其 key 将失效。')) return;
+      try {
+        await api(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        showToast('已删除');
+        loadUsers();
+      } catch (err) {
+        if (err.status === 401) return logout();
+        showToast('删除失败：' + err.message);
+      }
+    }
+
+    // ===== key 弹层 =====
+    const keyModal = document.getElementById('keyModal');
+    function showKeyModal(title, key) {
+      document.getElementById('keyModalTitle').textContent = title;
+      document.getElementById('keyModalValue').value = key;
+      keyModal.classList.add('show');
+    }
+    document.getElementById('closeKeyModal').addEventListener('click', () => keyModal.classList.remove('show'));
+    document.getElementById('copyKeyBtn').addEventListener('click', async () => {
+      const val = document.getElementById('keyModalValue').value;
+      try {
+        await navigator.clipboard.writeText(val);
+        showToast('已复制到剪贴板');
+      } catch (e) {
+        const el = document.getElementById('keyModalValue');
+        el.select();
+        document.execCommand('copy');
+        showToast('已复制');
+      }
+    });
+
+    // ===== 事件委托 =====
+    document.getElementById('quotaTableWrap').addEventListener('click', (e) => {
+      const ab = e.target.closest('button[data-auto]');
+      if (ab) return toggleAutoSchedule(ab.dataset.auto, ab.dataset.next === '1');
+      const btn = e.target.closest('button[data-sched]');
+      if (btn) toggleSchedulable(btn.dataset.sched, btn.dataset.next === '1');
+    });
+    document.getElementById('userTableWrap').addEventListener('click', (e) => {
+      const reset = e.target.closest('button[data-reset]');
+      if (reset) return resetUser(reset.dataset.reset);
+      const del = e.target.closest('button[data-del]');
+      if (del) return deleteUser(del.dataset.del);
+      const edit = e.target.closest('button[data-edit]');
+      if (edit) return editUser(edit.dataset.edit, edit.dataset.label);
+    });
+
+    document.getElementById('createBtn').addEventListener('click', createUser);
+    document.getElementById('refreshBtn').addEventListener('click', () => { loadQuotas(); loadUsers(); });
+    document.getElementById('logoutBtn').addEventListener('click', logout);
+
+    // 自动刷新开关：打开后每秒倒计时，归零即刷新额度（含实时并发）并重置；关闭则停止。
+    const autoRefreshEl = document.getElementById('autoRefresh');
+    const autoLabelEl = document.getElementById('autoLabel');
+    const AUTO_SECONDS = 60;
+    let tickTimer = null;
+    let countdown = AUTO_SECONDS;
+    function renderAutoLabel() {
+      autoLabelEl.textContent = autoRefreshEl.checked ? `（${countdown}s）` : '';
+    }
+    autoRefreshEl.addEventListener('change', () => {
+      if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+      if (autoRefreshEl.checked) {
+        countdown = AUTO_SECONDS;
+        renderAutoLabel();
+        tickTimer = setInterval(() => {
+          countdown--;
+          if (countdown <= 0) { countdown = AUTO_SECONDS; loadQuotas(); }
+          renderAutoLabel();
+        }, 1000);
+      } else {
+        renderAutoLabel();
+      }
+    });
+
+    // ===== 会话 =====
+    // 无有效会话 cookie（未通过暗门 / 直接访问 /admin）时，回到首页暗门。
+    function logout() {
+      window.location.href = '/';
+    }
+
+    // 通过暗门后凭 cookie 直接进入：显示面板并加载数据。
+    container.style.display = 'block';
+    loadQuotas();
+    loadUsers();
+  </script>
+</body>
+
+</html>

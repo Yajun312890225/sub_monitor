@@ -1,3 +1,5 @@
 config.yaml
 monitor
+data.json
+data/
 .gocache/

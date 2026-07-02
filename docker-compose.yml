@@ -1,0 +1,24 @@
+services:
+  monitor:
+    build: .
+    image: sub-monitor:latest
+    container_name: sub-monitor
+    restart: unless-stopped
+    ports:
+      # 宿主机端口:容器端口（容器内固定 8080，对外用 8090，可按需修改）
+      - "8090:8080"
+    volumes:
+      # 配置只读挂载
+      - ./config.yaml:/app/config.yaml:ro
+      # 用户存储持久化（对应 config.yaml 里的 store_path: data/data.json）
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+    networks:
+      # 加入 sub2api 所在的内网，凭容器名 sub2api 直连，admin key 不出宿主机
+      - sub2api
+
+networks:
+  sub2api:
+    external: true
+    name: sub2api-deploy_sub2api-network
