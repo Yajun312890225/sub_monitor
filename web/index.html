@@ -316,6 +316,28 @@
       font-size: 11px;
       color: var(--muted);
     }
+
+    /* ===== 移动端适配 ===== */
+    @media (max-width: 640px) {
+      body {
+        /* 顶部对齐，内容变高时卡片顶部不会被居中裁掉 */
+        align-items: flex-start;
+        padding: 16px;
+      }
+
+      .card {
+        padding: 24px 20px;
+        border-radius: 16px;
+      }
+
+      .card-head {
+        flex-wrap: wrap;
+      }
+
+      .title {
+        font-size: 20px;
+      }
+    }
   </style>
 </head>
 

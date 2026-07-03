@@ -4,8 +4,10 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -36,6 +38,7 @@ func (s *Server) registerWebRoutes() {
 	s.mux.HandleFunc("DELETE /api/admin/users/{id}", s.handleAdminDeleteUser)
 	s.mux.HandleFunc("POST /api/admin/accounts/{id}/schedulable", s.handleAdminSetSchedulable)
 	s.mux.HandleFunc("POST /api/admin/accounts/{id}/auto-schedule", s.handleAdminSetAutoSchedule)
+	s.mux.HandleFunc("POST /api/admin/accounts/{id}/test", s.handleAdminTestAccount)
 }
 
 // ===== 页面 =====
@@ -311,6 +314,59 @@ func (s *Server) handleAdminSetAutoSchedule(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"auto_schedule": req.Enabled})
+}
+
+type testAccountRequest struct {
+	ModelID  string `json:"model_id"` // 可选：显式指定测试模型；留空则按账号厂商自动选择
+	Platform string `json:"platform"` // 可选：账号厂商（前端已知则直接传，省一次上游查询）
+}
+
+// handleAdminTestAccount 对某账号发起一次连通性测试。
+// 按账号「厂商」自动选择测试模型（anthropic→claude、openai→gpt，可用 test_models 覆盖），
+// 调用 sub2api 的测试接口并把其 SSE 流归并成一次性结果返回。
+func (s *Server) handleAdminTestAccount(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	accountID := r.PathValue("id")
+	if accountID == "" {
+		writeError(w, http.StatusBadRequest, "account id is required")
+		return
+	}
+
+	var req testAccountRequest
+	if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// 判断用哪个模型：显式指定优先；否则按厂商映射（厂商前端未给则回查账号详情）。
+	modelID := strings.TrimSpace(req.ModelID)
+	if modelID == "" {
+		platform := strings.TrimSpace(req.Platform)
+		if platform == "" {
+			var acc rawAccount
+			if err := s.client.getJSON(r.Context(), pathListAccounts+"/"+url.PathEscape(accountID), &acc); err != nil {
+				writeError(w, http.StatusBadGateway, err.Error())
+				return
+			}
+			platform = acc.Platform
+		}
+		m, ok := s.testModelFor(platform)
+		if !ok {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("厂商 %q 未配置测试模型，请在 config.yaml 的 test_models 中指定", platform))
+			return
+		}
+		modelID = m
+	}
+
+	res, err := s.client.TestAccount(r.Context(), accountID, modelID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // ===== 工具 =====

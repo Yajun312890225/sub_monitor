@@ -6,6 +6,15 @@ usage_source: "active"  # active=实时拉上游(服务端缓存~10min) | passiv
 dry_run: false          # true 时只打印将要做的调度变更，不真正调用
 store_path: "data/data.json" # 用户存储文件路径（存放自动生成的用户 key 哈希；docker 下挂载到数据卷）
 
+# 各厂商「连通性测试」所用模型（platform -> model_id），可选。
+# 管理页点账号「测试」时按其厂商选模型；不配置则用内置默认：
+#   anthropic -> claude-sonnet-4-6, openai -> gpt-5.5
+# 其他厂商（或想换模型）在此覆盖：
+# test_models:
+#   anthropic: "claude-sonnet-4-6"
+#   openai: "gpt-5.5"
+#   gemini: "gemini-2.5-pro"
+
 sub2api:
   # 你的 sub2api 部署地址（不带末尾斜杠）
   base_url: "https://your-sub2api.example.com"

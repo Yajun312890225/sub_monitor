@@ -180,6 +180,13 @@
       margin: 0 0 14px;
     }
 
+    /* 表格容器：窄屏时横向滚动，避免宽表格把整页撑宽导致手机缩放变形 */
+    #quotaTableWrap,
+    #userTableWrap {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -251,6 +258,7 @@
     .row-actions {
       display: flex;
       gap: 6px;
+      flex-wrap: wrap;
     }
 
     code {
@@ -395,6 +403,94 @@
       margin-top: 12px;
       min-height: 18px;
     }
+
+    /* ===== 测试结果弹层 ===== */
+    .test-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      margin-bottom: 10px;
+    }
+
+    .test-k {
+      color: var(--muted);
+    }
+
+    .test-reply {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 240px;
+      overflow: auto;
+    }
+
+    .test-reply.err-box {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: var(--danger);
+    }
+
+    /* ===== 移动端适配 ===== */
+    @media (max-width: 640px) {
+      body {
+        padding: 14px;
+      }
+
+      .topbar {
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .topbar h1 {
+        font-size: 18px;
+      }
+
+      .topbar .actions {
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .panel {
+        padding: 16px;
+        border-radius: 14px;
+        margin-bottom: 16px;
+      }
+
+      .panel-head h2 {
+        font-size: 15px;
+      }
+
+      /* 新建账号表单：窄屏改为纵向堆叠，输入框与按钮各占一行 */
+      .create-form {
+        gap: 8px;
+      }
+
+      .create-form input {
+        flex: 1 1 100%;
+        min-width: 0;
+        width: 100%;
+      }
+
+      .create-form button {
+        width: 100%;
+      }
+
+      th,
+      td {
+        padding: 8px 10px;
+      }
+
+      .modal {
+        padding: 20px;
+      }
+    }
   </style>
 </head>
 
@@ -452,6 +548,17 @@
       </div>
       <div class="modal-foot">
         <button class="ghost" id="closeKeyModal">我已保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 连通性测试结果弹层 -->
+  <div class="modal-mask" id="testModal">
+    <div class="modal">
+      <h3 id="testModalTitle">测试结果</h3>
+      <div id="testModalBody"></div>
+      <div class="modal-foot">
+        <button class="ghost" id="closeTestModal">关闭</button>
       </div>
     </div>
   </div>
@@ -562,6 +669,7 @@
             <td>${sonnet}</td>
             <td>
               <div class="row-actions">
+                <button class="sm ghost" data-test="${esc(q.id)}" data-platform="${esc(q.platform || '')}">测试</button>
                 <button class="sm autobtn ${autoOn ? 'on' : 'off'}" data-auto="${q.id}" data-next="${autoOn ? '0' : '1'}">${autoOn ? '自动调度 开' : '自动调度 关'}</button>
                 <button class="sm ${toggleCls}" data-sched="${q.id}" data-next="${q.schedulable ? '0' : '1'}">${toggleLabel}</button>
               </div>
@@ -608,6 +716,44 @@
         showToast('操作失败：' + err.message);
       }
     }
+
+    // 连通性测试：后端按账号厂商自动选模型（把已知 platform 一并传过去省一次上游查询），
+    // 调用 sub2api 测试接口并把结果弹层展示。
+    async function testAccount(btn, id, platform) {
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '测试中…';
+      try {
+        const data = await api(`/api/admin/accounts/${encodeURIComponent(id)}/test`, {
+          method: 'POST',
+          body: JSON.stringify({ platform: platform || '' }),
+        });
+        showTestResult(id, data);
+      } catch (err) {
+        if (err.status === 401) return logout();
+        showTestResult(id, { success: false, error: err.message });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    }
+
+    // ===== 测试结果弹层 =====
+    const testModal = document.getElementById('testModal');
+    function showTestResult(id, data) {
+      const ok = !!data.success && !data.error;
+      const badge = ok ? '<span class="badge on">成功</span>' : '<span class="badge off">失败</span>';
+      document.getElementById('testModalTitle').innerHTML = `测试结果 · 账号 ${esc(id)} ${badge}`;
+      const modelLine = data.model
+        ? `<div class="test-line"><span class="test-k">模型</span><code>${esc(data.model)}</code></div>`
+        : '';
+      const bodyText = ok ? (data.reply || '(无回复内容)') : (data.error || '未知错误');
+      const bodyCls = ok ? 'test-reply' : 'test-reply err-box';
+      document.getElementById('testModalBody').innerHTML =
+        `${modelLine}<div class="${bodyCls}">${esc(bodyText)}</div>`;
+      testModal.classList.add('show');
+    }
+    document.getElementById('closeTestModal').addEventListener('click', () => testModal.classList.remove('show'));
 
     // ===== 账号管理 =====
     async function loadUsers() {
@@ -727,6 +873,8 @@
 
     // ===== 事件委托 =====
     document.getElementById('quotaTableWrap').addEventListener('click', (e) => {
+      const tb = e.target.closest('button[data-test]');
+      if (tb) return testAccount(tb, tb.dataset.test, tb.dataset.platform);
       const ab = e.target.closest('button[data-auto]');
       if (ab) return toggleAutoSchedule(ab.dataset.auto, ab.dataset.next === '1');
       const btn = e.target.closest('button[data-sched]');

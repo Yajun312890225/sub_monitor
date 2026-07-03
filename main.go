@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -32,8 +33,10 @@ type Config struct {
 	UsageSource   string        `yaml:"usage_source"` // active(实时拉上游) | passive(读快照)
 	DryRun        bool          `yaml:"dry_run"`      // 只记录将要做的调度变更，不真正调用
 	StorePath     string        `yaml:"store_path"`   // 用户存储文件路径，默认 data.json
-	Sub2API       Sub2APIConfig `yaml:"sub2api"`
-	Admin         AdminConfig   `yaml:"admin"`
+	// TestModels 覆盖各厂商的连通性测试模型（platform -> model_id），留空则用内置默认。
+	TestModels map[string]string `yaml:"test_models"`
+	Sub2API    Sub2APIConfig     `yaml:"sub2api"`
+	Admin      AdminConfig       `yaml:"admin"`
 }
 
 // ScheduleSpec 返回传给 robfig/cron 的调度表达式。
@@ -154,6 +157,7 @@ const (
 	pathListAccounts = "/api/v1/admin/accounts"
 	pathUsageFmt     = "/api/v1/admin/accounts/%s/usage"
 	pathSchedulable  = "/api/v1/admin/accounts/%s/schedulable"
+	pathTestFmt      = "/api/v1/admin/accounts/%s/test"
 	listPageSize     = 200
 )
 
@@ -269,6 +273,88 @@ func (c *Sub2APIClient) SetSchedulable(ctx context.Context, id string, schedulab
 	body, _ := json.Marshal(map[string]bool{"schedulable": schedulable})
 	var sink json.RawMessage
 	return c.do(ctx, http.MethodPost, fmt.Sprintf(pathSchedulable, url.PathEscape(id)), body, &sink)
+}
+
+// TestResult 是账号连通性测试的聚合结果（由 sub2api 的 SSE 事件流归并而来）。
+type TestResult struct {
+	Success bool   `json:"success"`         // 是否收到 test_complete 且成功
+	Model   string `json:"model"`           // 实际测试所用模型
+	Reply   string `json:"reply"`           // 归并后的模型回复文本
+	Error   string `json:"error,omitempty"` // 测试失败时的错误信息
+}
+
+// TestAccount 调用 sub2api 的账号测试接口，消费其 SSE 事件流并归并成一次性结果。
+//
+// 该接口返回 text/event-stream（每行形如 `data: {"type":...}`），事件类型有：
+// test_start{model} / content{text} / test_complete{success} / error{error}，
+// 不是标准的 {"code":0,...} 封装，因此单独实现、不走 do()。
+func (c *Sub2APIClient) TestAccount(ctx context.Context, id, modelID string) (TestResult, error) {
+	body, _ := json.Marshal(map[string]string{"model_id": modelID, "prompt": ""})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+fmt.Sprintf(pathTestFmt, url.PathEscape(id)), bytes.NewReader(body))
+	if err != nil {
+		return TestResult{}, err
+	}
+	req.Header.Set("x-api-key", c.apiKey)
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return TestResult{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return TestResult{}, fmt.Errorf("sub2api POST test status=%d body=%s",
+			resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+
+	res := TestResult{Model: modelID}
+	sc := bufio.NewScanner(io.LimitReader(resp.Body, 10<<20))
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" {
+			continue
+		}
+		var ev struct {
+			Type    string `json:"type"`
+			Model   string `json:"model"`
+			Text    string `json:"text"`
+			Success bool   `json:"success"`
+			Error   string `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+			continue // 跳过非 JSON 的心跳/注释行
+		}
+		switch ev.Type {
+		case "test_start":
+			if ev.Model != "" {
+				res.Model = ev.Model
+			}
+		case "content":
+			if len(res.Reply) < 4096 { // 回复文本封顶，避免异常超长响应
+				res.Reply += ev.Text
+			}
+		case "test_complete":
+			res.Success = ev.Success
+		case "error":
+			res.Error = ev.Error
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return res, fmt.Errorf("read test stream: %w", err)
+	}
+	if res.Error != "" { // 出现 error 事件即视为失败
+		res.Success = false
+	}
+	return res, nil
 }
 
 func (c *Sub2APIClient) getJSON(ctx context.Context, path string, out any) error {
@@ -395,6 +481,24 @@ func (s *Server) QuotaByID(ctx context.Context, id string) (AccountQuota, error)
 	}
 	q.AutoSchedule = s.store.AutoScheduleEnabled(id)
 	return q, nil
+}
+
+// defaultTestModels 是各厂商的默认连通性测试模型（可被 config.test_models 覆盖）。
+var defaultTestModels = map[string]string{
+	"anthropic": "claude-sonnet-4-6",
+	"openai":    "gpt-5.5",
+}
+
+// testModelFor 按账号厂商决定用于连通性测试的模型 ID：
+// 优先取 config.test_models 的覆盖值，否则回退到内置默认；未知厂商返回 false。
+func (s *Server) testModelFor(platform string) (string, bool) {
+	if m, ok := s.cfg.TestModels[platform]; ok && strings.TrimSpace(m) != "" {
+		return strings.TrimSpace(m), true
+	}
+	if m, ok := defaultTestModels[platform]; ok {
+		return m, true
+	}
+	return "", false
 }
 
 // ===== HTTP 服务 =====
