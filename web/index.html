@@ -375,6 +375,7 @@
     const AUTO_SECONDS = 60;
     let tickTimer = null;          // 每秒倒计时句柄
     let countdown = AUTO_SECONDS;  // 距下次自动刷新的秒数
+    let loggedIn = false;          // 当前是否处于已登录态（用于丢弃退出后迟到的刷新结果）
 
     // 厂商展示名（只显示厂商，不显示账号 ID）。
     function vendorLabel(p) {
@@ -395,6 +396,7 @@
 
     // 切换「已登录」视图：隐藏输入框、显示顶部操作区（登录一次后免再输）。
     function setLoggedIn(isIn) {
+      loggedIn = isIn;
       form.style.display = isIn ? 'none' : 'flex';
       subtitle.style.display = isIn ? 'none' : 'block';
       headActions.style.display = isIn ? 'flex' : 'none';
@@ -524,7 +526,10 @@
       try {
         const resp = await fetch('/api/me/quota', { credentials: 'same-origin' });
         if (resp.status === 401) { setLoggedIn(false); return; }
-        if (resp.ok) render(await resp.json());
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!loggedIn) return; // 拉取期间用户已退出，丢弃这次迟到的结果
+        render(data);
       } catch (e) { /* 忽略网络抖动 */ }
     }
 
