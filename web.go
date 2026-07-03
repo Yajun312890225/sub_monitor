@@ -4,10 +4,8 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 )
 
@@ -26,6 +24,8 @@ func (s *Server) registerWebRoutes() {
 	s.mux.HandleFunc("POST /api/query", s.handleQuery)
 	// 凭用户会话 cookie 查询自己的额度（登录一次后免再输）。
 	s.mux.HandleFunc("GET /api/me/quota", s.handleMeQuota)
+	// 凭用户会话 cookie 对自己绑定的账号发起连通性测试。
+	s.mux.HandleFunc("POST /api/me/test", s.handleMeTest)
 	// 退出：清除会话 cookie（管理员/用户通用）。
 	s.mux.HandleFunc("POST /api/logout", s.handleLogout)
 
@@ -340,33 +340,40 @@ func (s *Server) handleAdminTestAccount(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 判断用哪个模型：显式指定优先；否则按厂商映射（厂商前端未给则回查账号详情）。
-	modelID := strings.TrimSpace(req.ModelID)
-	if modelID == "" {
-		platform := strings.TrimSpace(req.Platform)
-		if platform == "" {
-			var acc rawAccount
-			if err := s.client.getJSON(r.Context(), pathListAccounts+"/"+url.PathEscape(accountID), &acc); err != nil {
-				writeError(w, http.StatusBadGateway, err.Error())
-				return
-			}
-			platform = acc.Platform
-		}
-		m, ok := s.testModelFor(platform)
-		if !ok {
-			writeError(w, http.StatusBadRequest,
-				fmt.Sprintf("厂商 %q 未配置测试模型，请在 config.yaml 的 test_models 中指定", platform))
-			return
-		}
-		modelID = m
-	}
-
-	res, err := s.client.TestAccount(r.Context(), accountID, modelID)
+	res, status, err := s.runAccountTest(r.Context(), accountID, req.Platform, req.ModelID)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, status, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeJSON(w, status, res)
+}
+
+// handleMeTest 凭用户会话 cookie 对该用户绑定的账号发起一次连通性测试。
+// 与管理员入口共用测试逻辑，但只测自己绑定的账号、按厂商自动选模型（不接受自定义模型）。
+func (s *Server) handleMeTest(w http.ResponseWriter, r *http.Request) {
+	c, err := r.Cookie(userCookieName)
+	if err != nil || c.Value == "" {
+		writeError(w, http.StatusUnauthorized, "未登录")
+		return
+	}
+	accountID, ok := s.store.FindByHash(c.Value)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "会话已失效，请重新输入密钥")
+		return
+	}
+
+	var req testAccountRequest
+	if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	res, status, err := s.runAccountTest(r.Context(), accountID, req.Platform, "")
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, status, res)
 }
 
 // ===== 工具 =====

@@ -501,6 +501,34 @@ func (s *Server) testModelFor(platform string) (string, bool) {
 	return "", false
 }
 
+// runAccountTest 判定测试模型并对账号执行一次连通性测试（供管理员/用户两个入口复用）。
+// platformHint 为调用方已知的厂商（可空，空则回查账号详情）；modelOverride 显式指定模型（可空）。
+// 返回测试结果、建议的 HTTP 状态码与错误。
+func (s *Server) runAccountTest(ctx context.Context, accountID, platformHint, modelOverride string) (TestResult, int, error) {
+	modelID := strings.TrimSpace(modelOverride)
+	if modelID == "" {
+		platform := strings.TrimSpace(platformHint)
+		if platform == "" {
+			var acc rawAccount
+			if err := s.client.getJSON(ctx, pathListAccounts+"/"+url.PathEscape(accountID), &acc); err != nil {
+				return TestResult{}, http.StatusBadGateway, err
+			}
+			platform = acc.Platform
+		}
+		m, ok := s.testModelFor(platform)
+		if !ok {
+			return TestResult{}, http.StatusBadRequest,
+				fmt.Errorf("厂商 %q 未配置测试模型，请在 config.yaml 的 test_models 中指定", platform)
+		}
+		modelID = m
+	}
+	res, err := s.client.TestAccount(ctx, accountID, modelID)
+	if err != nil {
+		return TestResult{}, http.StatusBadGateway, err
+	}
+	return res, http.StatusOK, nil
+}
+
 // ===== HTTP 服务 =====
 
 type Server struct {

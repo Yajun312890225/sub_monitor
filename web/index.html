@@ -37,7 +37,7 @@
 
     .card {
       width: 100%;
-      max-width: 460px;
+      max-width: 560px;
       background: var(--card);
       border-radius: 18px;
       box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
@@ -61,6 +61,7 @@
       align-items: flex-start;
       justify-content: space-between;
       gap: 12px;
+      flex-wrap: wrap;
     }
 
     .logout {
@@ -317,6 +318,95 @@
       color: var(--muted);
     }
 
+    /* ===== 测试结果弹层 ===== */
+    .modal-mask {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, .55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      padding: 24px;
+    }
+
+    .modal-mask.show {
+      display: flex;
+    }
+
+    .modal {
+      background: #fff;
+      border-radius: 16px;
+      padding: 26px;
+      width: 100%;
+      max-width: 460px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, .35);
+    }
+
+    .modal h3 {
+      margin: 0 0 14px;
+      font-size: 17px;
+    }
+
+    .modal-foot {
+      margin-top: 20px;
+      text-align: right;
+    }
+
+    button.ghost {
+      background: #f1f5f9;
+      color: var(--text);
+    }
+
+    .badge.on {
+      background: #ecfdf5;
+      color: var(--ok);
+    }
+
+    .badge.off {
+      background: #fef2f2;
+      color: var(--danger);
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: #f1f5f9;
+      padding: 2px 6px;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+
+    .test-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      margin-bottom: 10px;
+    }
+
+    .test-k {
+      color: var(--muted);
+    }
+
+    .test-reply {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 240px;
+      overflow: auto;
+    }
+
+    .test-reply.err-box {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: var(--danger);
+    }
+
     /* ===== 移动端适配 ===== */
     @media (max-width: 640px) {
       body {
@@ -338,6 +428,23 @@
         font-size: 20px;
       }
     }
+
+    /* 窄屏：操作区整体落到标题下方，横向排成一排（自动刷新在最左，刷新/测试/退出 依次向右） */
+    @media (max-width: 520px) {
+      .head-actions {
+        flex: 1 1 100%;
+        justify-content: flex-end;
+      }
+      /* 紧凑一点，让 自动刷新 + 三个按钮 尽量排在同一行 */
+      .head-actions .refresh,
+      .head-actions .logout {
+        padding: 8px 12px;
+      }
+      /* 空闲时不预留倒计时宽度，给按钮腾地方（开自动刷新时才占位） */
+      .countdown {
+        min-width: 0;
+      }
+    }
   </style>
 </head>
 
@@ -355,6 +462,7 @@
           <span class="switch-text">自动刷新<span class="countdown" id="autoLabel"></span></span>
         </label>
         <button id="refreshBtn" class="refresh" type="button">刷新</button>
+        <button id="testBtn" class="refresh" type="button">测试</button>
         <button id="logoutBtn" class="logout" type="button">退出</button>
       </div>
     </div>
@@ -381,6 +489,17 @@
     </div>
   </div>
 
+  <!-- 连通性测试结果弹层 -->
+  <div class="modal-mask" id="testModal">
+    <div class="modal">
+      <h3 id="testModalTitle">测试结果</h3>
+      <div id="testModalBody"></div>
+      <div class="modal-foot">
+        <button class="ghost" id="closeTestModal">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const form = document.getElementById('form');
     const keyInput = document.getElementById('key');
@@ -393,11 +512,14 @@
     const refreshBtn = document.getElementById('refreshBtn');
     const autoRefreshEl = document.getElementById('autoRefresh');
     const autoLabelEl = document.getElementById('autoLabel');
+    const testBtn = document.getElementById('testBtn');
+    const testModal = document.getElementById('testModal');
 
     const AUTO_SECONDS = 60;
     let tickTimer = null;          // 每秒倒计时句柄
     let countdown = AUTO_SECONDS;  // 距下次自动刷新的秒数
     let loggedIn = false;          // 当前是否处于已登录态（用于丢弃退出后迟到的刷新结果）
+    let currentPlatform = '';      // 最近一次渲染的账号厂商（测试时告知后端选模型，省一次上游查询）
 
     // 厂商展示名（只显示厂商，不显示账号 ID）。
     function vendorLabel(p) {
@@ -424,6 +546,7 @@
       headActions.style.display = isIn ? 'flex' : 'none';
       if (!isIn) {
         result.classList.remove('show');
+        testModal.classList.remove('show');
         keyInput.value = '';
         stopAutoRefresh();
       }
@@ -479,7 +602,14 @@
         </div>`;
     }
 
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ));
+    }
+
     function render(q) {
+      currentPlatform = q.platform || '';
       document.getElementById('accName').textContent = q.name || '未命名账号';
       document.getElementById('accId').textContent = vendorLabel(q.platform);
 
@@ -556,6 +686,45 @@
     }
 
     refreshBtn.addEventListener('click', refreshQuota);
+
+    // 展示测试结果弹层（成功显示模型回复，失败显示错误）。
+    function showTestResult(data) {
+      const ok = !!data.success && !data.error;
+      const badge = ok ? '<span class="badge on">成功</span>' : '<span class="badge off">失败</span>';
+      document.getElementById('testModalTitle').innerHTML = `测试结果 ${badge}`;
+      const modelLine = data.model
+        ? `<div class="test-line"><span class="test-k">模型</span><code>${esc(data.model)}</code></div>`
+        : '';
+      const bodyText = ok ? (data.reply || '(无回复内容)') : (data.error || '未知错误');
+      const bodyCls = ok ? 'test-reply' : 'test-reply err-box';
+      document.getElementById('testModalBody').innerHTML =
+        `${modelLine}<div class="${bodyCls}">${esc(bodyText)}</div>`;
+      testModal.classList.add('show');
+    }
+
+    // 测试自己绑定的账号：不改按钮文本，仅置灰禁用（避免抖动），后端按厂商自动选模型。
+    async function testMe() {
+      testBtn.disabled = true;
+      try {
+        const resp = await fetch('/api/me/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ platform: currentPlatform }),
+        });
+        if (resp.status === 401) { setLoggedIn(false); return; }
+        const data = await resp.json();
+        if (!resp.ok) { showTestResult({ success: false, error: data.error || '测试失败' }); return; }
+        showTestResult(data);
+      } catch (err) {
+        showTestResult({ success: false, error: '网络错误：' + err.message });
+      } finally {
+        testBtn.disabled = false;
+      }
+    }
+
+    testBtn.addEventListener('click', testMe);
+    document.getElementById('closeTestModal').addEventListener('click', () => testModal.classList.remove('show'));
 
     // 自动刷新开关：打开后每秒倒计时，归零即刷新并重置；关闭则停止。
     autoRefreshEl.addEventListener('change', () => {

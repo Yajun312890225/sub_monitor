@@ -720,9 +720,8 @@
     // 连通性测试：后端按账号厂商自动选模型（把已知 platform 一并传过去省一次上游查询），
     // 调用 sub2api 测试接口并把结果弹层展示。
     async function testAccount(btn, id, platform) {
-      const orig = btn.textContent;
+      // 不改按钮文本，仅置灰禁用（避免文字变宽导致按钮行抖动）。
       btn.disabled = true;
-      btn.textContent = '测试中…';
       try {
         const data = await api(`/api/admin/accounts/${encodeURIComponent(id)}/test`, {
           method: 'POST',
@@ -734,7 +733,6 @@
         showTestResult(id, { success: false, error: err.message });
       } finally {
         btn.disabled = false;
-        btn.textContent = orig;
       }
     }
 
