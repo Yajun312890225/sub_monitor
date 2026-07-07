@@ -584,6 +584,22 @@
       return data;
     }
 
+    // 带一次重试的请求：首次失败（非鉴权错误）后稍等再试一次，
+    // 减少偶发网络抖动/上游超时导致刷新失败。
+    async function apiWithRetry(path, opts = {}) {
+      try {
+        return await api(path, opts);
+      } catch (err) {
+        if (err.status === 401) throw err; // 鉴权失败重试无意义
+        await new Promise(r => setTimeout(r, 800));
+        return await api(path, opts);
+      }
+    }
+
+    // 标记各表是否已成功加载过：失败时若已有数据则保留旧内容，仅弹窗提示，不刷没。
+    let quotasLoaded = false;
+    let usersLoaded = false;
+
     function showToast(text) {
       toast.textContent = text;
       toast.style.display = 'block';
@@ -640,7 +656,8 @@
     async function loadQuotas() {
       const wrap = document.getElementById('quotaTableWrap');
       try {
-        const data = await api('/api/admin/quotas');
+        const data = await apiWithRetry('/api/admin/quotas');
+        quotasLoaded = true;
         const accounts = data.accounts || [];
         if (!accounts.length) {
           wrap.innerHTML = '<div class="empty">暂无账号</div>';
@@ -685,7 +702,12 @@
         </table>`;
       } catch (err) {
         if (err.status === 401) return logout();
-        wrap.innerHTML = `<div class="empty">加载失败：${esc(err.message)}</div>`;
+        // 已有数据时保留旧表格，仅弹窗提示（几秒后自动关闭），避免把页面刷没。
+        if (quotasLoaded) {
+          showToast('额度刷新失败，已保留上次数据：' + err.message);
+        } else {
+          wrap.innerHTML = `<div class="empty">加载失败：${esc(err.message)}</div>`;
+        }
       }
     }
 
@@ -757,7 +779,8 @@
     async function loadUsers() {
       const wrap = document.getElementById('userTableWrap');
       try {
-        const data = await api('/api/admin/users');
+        const data = await apiWithRetry('/api/admin/users');
+        usersLoaded = true;
         const users = data.users || [];
         if (!users.length) {
           wrap.innerHTML = '<div class="empty">暂无账号，请在上方新建</div>';
@@ -784,7 +807,12 @@
         </table>`;
       } catch (err) {
         if (err.status === 401) return logout();
-        wrap.innerHTML = `<div class="empty">加载失败：${esc(err.message)}</div>`;
+        // 已有数据时保留旧表格，仅弹窗提示（几秒后自动关闭），避免把页面刷没。
+        if (usersLoaded) {
+          showToast('账号列表刷新失败，已保留上次数据：' + err.message);
+        } else {
+          wrap.innerHTML = `<div class="empty">加载失败：${esc(err.message)}</div>`;
+        }
       }
     }
 
