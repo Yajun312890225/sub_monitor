@@ -669,7 +669,12 @@
           const schedText = q.schedulable ? '开启' : '关闭';
           const toggleLabel = q.schedulable ? '关调度' : '开调度';
           const toggleCls = q.schedulable ? 'danger' : 'ghost';
-          const sonnet = q.seven_day_sonnet_percent > 0 ? fmtPct(q.seven_day_sonnet_percent) : '-';
+          // 无用量窗口的账号（如 Anthropic API Key 直连）：三列用量统一显示 "-"，不显示告警。
+          const noUsage = q.no_usage === true;
+          const dash = '<span style="color:var(--muted)" title="该账号无用量窗口（如 API Key 直连账号）">-</span>';
+          const fiveHour = noUsage ? dash : pctCell(q.five_hour_percent, q.five_hour_resets_at);
+          const sevenDay = noUsage ? dash : pctCell(q.seven_day_percent, q.seven_day_resets_at);
+          const sonnet = noUsage ? dash : (q.seven_day_sonnet_percent > 0 ? fmtPct(q.seven_day_sonnet_percent) : '-');
           const errMark = q.usage_error ? ' <span title="' + esc(q.usage_error) + '" style="color:var(--danger)">⚠</span>' : '';
           const cc = Number(q.current_concurrency) || 0;
           const cmax = Number(q.concurrency) || 0;
@@ -681,8 +686,8 @@
             <td><span class="badge ${statusCls}">${esc(q.status || '-')}</span></td>
             <td><span class="badge ${schedCls}">${schedText}</span></td>
             <td>${conc}</td>
-            <td>${pctCell(q.five_hour_percent, q.five_hour_resets_at)}</td>
-            <td>${pctCell(q.seven_day_percent, q.seven_day_resets_at)}</td>
+            <td>${fiveHour}</td>
+            <td>${sevenDay}</td>
             <td>${sonnet}</td>
             <td>
               <div class="row-actions">

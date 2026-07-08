@@ -126,6 +126,7 @@ type AccountQuota struct {
 	ID                    string     `json:"id"`
 	Name                  string     `json:"name"`
 	Platform              string     `json:"platform"`
+	Type                  string     `json:"type,omitempty"` // 账号类型：apikey / setup-token / oauth 等
 	Status                string     `json:"status"`
 	Schedulable           bool       `json:"schedulable"`
 	AutoSchedule          bool       `json:"auto_schedule"`       // 是否参与本服务的自动调度（默认 true）
@@ -137,6 +138,9 @@ type AccountQuota struct {
 	FiveHourResetsAt      *time.Time `json:"five_hour_resets_at,omitempty"`
 	SevenDayResetsAt      *time.Time `json:"seven_day_resets_at,omitempty"`
 	UsageError            string     `json:"usage_error,omitempty"`
+	// NoUsage 表示上游正常返回、但该账号没有任何用量窗口（如 Anthropic API Key 直连账号）。
+	// 这类账号无额度可判断：前端展示为“-”、不视为错误(不显示⚠)，也不参与阈值自动调度。
+	NoUsage bool `json:"no_usage,omitempty"`
 }
 
 // OverThreshold 判断任一窗口是否达到阈值。threshold 为 0~1 的比例。
@@ -168,11 +172,16 @@ type envelope struct {
 	Data    json.RawMessage `json:"data"`
 }
 
+// accountTypeAPIKey 是 sub2api 中「API Key 直连」账号的 type 值。
+// 这类账号没有订阅式的 5h/7d 滚动用量窗口，查用量会返回 500，本服务视为“无用量窗口”。
+const accountTypeAPIKey = "apikey"
+
 // rawAccount 仅取本服务关心的账号字段。
 type rawAccount struct {
 	ID                 json.Number `json:"id"`
 	Name               string      `json:"name"`
 	Platform           string      `json:"platform"`
+	Type               string      `json:"type"` // 账号类型：apikey / setup-token / oauth 等
 	Status             string      `json:"status"`
 	Schedulable        bool        `json:"schedulable"`
 	Concurrency        int         `json:"concurrency"`         // 配置的最大并发
@@ -195,6 +204,12 @@ type usageData struct {
 	SevenDay       *usageWindow `json:"seven_day"`
 	SevenDaySonnet *usageWindow `json:"seven_day_sonnet"`
 	Error          string       `json:"error"`
+}
+
+// noWindows 判断上游是否未返回任何用量窗口（5h/7d/7d-sonnet 均为空）。
+// 典型场景：Anthropic API Key 直连账号本身没有订阅式的滚动额度窗口。
+func (u usageData) noWindows() bool {
+	return u.FiveHour == nil && u.SevenDay == nil && u.SevenDaySonnet == nil
 }
 
 type Sub2APIClient struct {
@@ -414,11 +429,11 @@ func quotaFromUsage(acc rawAccount, usage usageData) AccountQuota {
 		ID:                 acc.ID.String(),
 		Name:               acc.Name,
 		Platform:           acc.Platform,
+		Type:               acc.Type,
 		Status:             acc.Status,
 		Schedulable:        acc.Schedulable,
 		Concurrency:        acc.Concurrency,
 		CurrentConcurrency: acc.CurrentConcurrency,
-		UsageError:         usage.Error,
 	}
 	if usage.FiveHour != nil {
 		q.FiveHourPercent = usage.FiveHour.Utilization
@@ -452,12 +467,24 @@ func (s *Server) CollectQuotas(ctx context.Context) ([]AccountQuota, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			usage, err := s.client.GetUsage(ctx, acc.ID.String())
-			if err != nil {
-				quotas[i] = quotaFromUsage(acc, usageData{Error: err.Error()})
+			// API Key 直连账号本身无用量窗口，直接标记，跳过用量拉取（否则上游每次 500）。
+			if acc.Type == accountTypeAPIKey {
+				q := quotaFromUsage(acc, usageData{})
+				q.NoUsage = true
+				quotas[i] = q
 				return
 			}
-			quotas[i] = quotaFromUsage(acc, usage)
+			usage, err := s.client.GetUsage(ctx, acc.ID.String())
+			q := quotaFromUsage(acc, usage)
+			switch {
+			case err != nil:
+				// 真·拉取失败（网络/HTTP/上游错误）：保留错误，前端显示 ⚠。
+				q.UsageError = err.Error()
+			case usage.noWindows():
+				// 正常返回但无任何用量窗口：无额度可判断，标记 no_usage，前端展示“-”，不告警。
+				q.NoUsage = true
+			}
+			quotas[i] = q
 		}()
 	}
 	wg.Wait()
@@ -474,10 +501,19 @@ func (s *Server) QuotaByID(ctx context.Context, id string) (AccountQuota, error)
 		return AccountQuota{}, err
 	}
 	var q AccountQuota
-	if usage, err := s.client.GetUsage(ctx, id); err != nil {
-		q = quotaFromUsage(acc, usageData{Error: err.Error()})
+	if acc.Type == accountTypeAPIKey {
+		// API Key 直连账号无用量窗口，直接标记，跳过用量拉取。
+		q = quotaFromUsage(acc, usageData{})
+		q.NoUsage = true
 	} else {
+		usage, err := s.client.GetUsage(ctx, id)
 		q = quotaFromUsage(acc, usage)
+		switch {
+		case err != nil:
+			q.UsageError = err.Error()
+		case usage.noWindows():
+			q.NoUsage = true
+		}
 	}
 	q.AutoSchedule = s.store.AutoScheduleEnabled(id)
 	return q, nil
@@ -718,9 +754,15 @@ func (s *Server) checkOnce(ctx context.Context) checkStats {
 			stats.skipped++
 			continue
 		}
-		// usage 拉取失败的账号不做调度变更，避免误判。
+		// usage 拉取失败、或本身无用量窗口(如 API Key 直连账号)的账号，
+		// 无额度可判断，不做调度变更，避免误判。
 		if q.UsageError != "" {
 			log.Printf("skip account=%s name=%q: usage error: %s", q.ID, q.Name, q.UsageError)
+			stats.skipped++
+			continue
+		}
+		if q.NoUsage {
+			log.Printf("skip account=%s name=%q: no usage window", q.ID, q.Name)
 			stats.skipped++
 			continue
 		}

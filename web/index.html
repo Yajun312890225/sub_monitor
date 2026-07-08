@@ -617,14 +617,20 @@
       statusEl.textContent = q.status || '-';
       statusEl.className = 'badge ' + (q.status === 'active' ? 'active' : 'other');
 
-      const bars = [
-        barRow('5 小时窗口', q.five_hour_percent, q.five_hour_resets_at),
-        barRow('7 天窗口', q.seven_day_percent, q.seven_day_resets_at),
-      ];
-      if (q.seven_day_sonnet_percent > 0) {
-        bars.push(barRow('7 天窗口 (Sonnet)', q.seven_day_sonnet_percent, null));
+      const barsEl = document.getElementById('bars');
+      if (q.no_usage) {
+        // 无用量窗口的账号（如 Anthropic API Key 直连）：没有 5h/7d 滚动额度可展示。
+        barsEl.innerHTML = '<div class="msg" style="color:var(--muted)">该账号无 5 小时 / 7 天用量窗口（如 API Key 直连账号）</div>';
+      } else {
+        const bars = [
+          barRow('5 小时窗口', q.five_hour_percent, q.five_hour_resets_at),
+          barRow('7 天窗口', q.seven_day_percent, q.seven_day_resets_at),
+        ];
+        if (q.seven_day_sonnet_percent > 0) {
+          bars.push(barRow('7 天窗口 (Sonnet)', q.seven_day_sonnet_percent, null));
+        }
+        barsEl.innerHTML = bars.join('');
       }
-      document.getElementById('bars').innerHTML = bars.join('');
 
       const ue = document.getElementById('usageError');
       if (q.usage_error) {
